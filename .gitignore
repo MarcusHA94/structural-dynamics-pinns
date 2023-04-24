@@ -1,0 +1,4 @@
+.gitattributes
+sdof_oscillators/__pycache__/
+sdof_oscillators/.ipynb_checkpoints/
+cont_beam/.ipynb_checkpoints/
