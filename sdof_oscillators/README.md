@@ -19,24 +19,24 @@ This example code set has the following notebooks, defined by the ordinary diffe
 
 ## SDOF linear oscillator - free vibration
 `sdof_free_linear.ipynb`
-$$
+```math
 m\ddot{x} + c\dot{x} + kx = 0
-$$
+```
 ## SDOF Duffing oscillator - free vibration
 `sdof_free_cubic.ipynb`
-$$
+```math
 m\ddot{x} + c\dot{x} + kx + k_3x^3 = 0
-$$
+```
 ## SDOF linear oscillator - forced vibration
 `sdof_forced_linear.ipynb`
-$$
+```math
 m\ddot{x} + c\dot{x} + kx = F_x
-$$
+```
 ## SDOF Duffing oscillator - forced vibration
 `sdof_forced_cubic.ipynb`
-$$
+```math
 m\ddot{x} + c\dot{x} + kx + k_3x^3 = F_x
-$$
+```
 
 More theory on the process is given in the notebooks. A simple guide on generating the ground truth model, and building and training the PINN is given here. For brevity, code snippets which define variables are not shown here but are clearly necessary.
 > Preamble
