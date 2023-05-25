@@ -61,7 +61,7 @@ def sdof_solution(time, **config): #params, init_conds, forcing=None, nonlineari
     data = sdof_system.simulate((nt, time[1]), w0=np.array([x0, v0]), normalise=False)
     x = torch.tensor(data["y1"]).view(-1,1).to(torch.float32)
     F = torch.tensor(data["x1"]).view(-1,1).to(torch.float32)
-    return x, F
+    return x
 
 def generate_excitation(time, **exc_config):
 

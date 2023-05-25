@@ -8,9 +8,9 @@ This repo includes a series of physics-informed neural networks for various dyna
 
 | Model             | Free vibration    | Forced Vibration  | One-step Ahead |
 | :----             | :------------:    | :--------------:  | :-----------:  |
-| Linear SDOF       | A                 | A                 | D              |
-| Duffing SDOF      | A                 | A                 | D              |
-| Linear MDOF       | P                 | P                 | P              |
+| Linear SDOF       | A                 | A                 | A              |
+| Duffing SDOF      | A                 | A                 | A              |
+| Linear MDOF       | D                 | D                 | D              |
 | Duffing MDOF      | P                 | P                 | P              |
 | Continuous Beam   | D                 | P                 | P              |
 <!-- | Elastic waves     | N/A               | D                 | N/A            | -->

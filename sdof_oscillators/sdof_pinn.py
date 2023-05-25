@@ -116,7 +116,7 @@ class sdof_pinn(nn.Module):
                 self.register_parameter("phys_params", nn.Parameter(torch.tensor([config["phys_params"]["c"], config["phys_params"]["k"], config["phys_params"]["k3"]])))
         match config["forcing"]:
             case dict():
-                self.force = torch.tensor(config["forcing"]["F_tild"])
+                self.force = torch.tensor(config["forcing"]["F_hat"]).reshape(-1,1)
 
     def set_norm_params(self):
         config = self.config
