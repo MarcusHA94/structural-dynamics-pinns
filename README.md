@@ -10,9 +10,9 @@ This repo includes a series of physics-informed neural networks for various dyna
 | :----             | :------------:    | :--------------:  | :-----------:  |
 | Linear SDOF       | A                 | A                 | A              |
 | Duffing SDOF      | A                 | A                 | A              |
-| Linear MDOF       | D                 | D                 | D              |
-| Duffing MDOF      | P                 | P                 | P              |
-| Continuous Beam   | D                 | P                 | P              |
+| Linear MDOF       | A                 | A                 | A              |
+| Duffing MDOF      | A                 | A                 | A              |
+| Continuous Beam   | D                 | P                 | D              |
 <!-- | Elastic waves     | N/A               | D                 | N/A            | -->
 
 # General PINN Definition
