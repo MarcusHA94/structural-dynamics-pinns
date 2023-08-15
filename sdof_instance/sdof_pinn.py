@@ -150,15 +150,24 @@ class sdof_pinn_ss(nn.Module):
         if config["nonlinearity"] == "cubic":
             self.alpha_k3 = torch.tensor(config["alphas"]["k3"], dtype=torch.float32)
 
-    def calc_residuals(self, t_pde_hat, t_obs, z_obs, epoch):
+    def calc_residuals(self, t_pde_hat, t_obs, z_obs, hard_bc=False):
+
+        if hard_bc:
+            G = 0.0
+            D_obs = torch.cat((torch.zeros((1,2)), torch.ones((t_obs.shape[0]-1,2))), dim=0)
+            D_pde = torch.cat((torch.zeros((1,2)), torch.ones((t_pde_hat.shape[0]-1,2))), dim=0)
+        else:
+            G = 0.0
+            D_obs = 1.0
+            D_pde = 1.0
 
         # observation residual
-        zh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
+        zh_obs = self.forward(t_obs, G, D_obs)  # N_y-hat or N_y (in Ω_a)
         R_obs = zh_obs - z_obs
 
         # ode values
         ic_id = torch.argwhere((t_pde_hat[:,0]==torch.tensor(0.0)))
-        zh_pde_hat = self.forward(t_pde_hat)   # N_y-hat (in Ω_ode)
+        zh_pde_hat = self.forward(t_pde_hat, G, D_pde)   # N_y-hat (in Ω_ode)
         dzdt = torch.zeros_like(zh_pde_hat)
         for i in range(2):
             dzdt[:,i] = torch.autograd.grad(zh_pde_hat[:,i], t_pde_hat, torch.ones_like(zh_pde_hat[:,i]), create_graph=True)[0][:,0]# ∂_t-hat N_z-hat
@@ -202,9 +211,6 @@ class sdof_pinn_ss(nn.Module):
         R_ode = R_[1,:].T
         R_cc = R_[0,:].T
 
-        if epoch>10000:
-            print('')
-
         return {
             "R_obs" : R_obs,
             "R_ic" : R_ic,
@@ -212,8 +218,8 @@ class sdof_pinn_ss(nn.Module):
             "R_ode" : R_ode
         }
 
-    def loss_func(self, t_pde, t_obs, x_obs, lambdas, epoch):
-        residuals = self.calc_residuals(t_pde, t_obs, x_obs, epoch)
+    def loss_func(self, t_pde, t_obs, x_obs, lambdas, hard_bc=False):
+        residuals = self.calc_residuals(t_pde, t_obs, x_obs, hard_bc)
         R_obs = residuals["R_obs"]
         R_ic = residuals["R_ic"]
         R_cc = residuals["R_cc"]
@@ -227,8 +233,13 @@ class sdof_pinn_ss(nn.Module):
 
         return loss, [L_obs, L_ic, L_cc, L_ode]
 
-    def predict(self, tp):
-        zp = self.forward(tp)
+    def predict(self, tp, hard_bc=False):
+        if hard_bc:
+            G = 0.0
+            D = torch.cat((torch.zeros((1,2)), torch.ones(tp.shape[0]-1, 2)), dim=0)
+            zp = self.forward(tp, G, D)
+        else:
+            zp = self.forward(tp)
         return zp
 
 
