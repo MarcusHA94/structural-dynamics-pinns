@@ -6,13 +6,14 @@ This repo includes a series of physics-informed neural networks for various dyna
  - P: Proposed
 
 
-| Model             | Free vibration    | Forced Vibration  | One-step Ahead |
-| :----             | :------------:    | :--------------:  | :-----------:  |
-| Linear SDOF       | A                 | A                 | A              |
-| Duffing SDOF      | A                 | A                 | A              |
-| Linear MDOF       | A                 | A                 | A              |
-| Duffing MDOF      | A                 | A                 | A              |
-| Continuous Beam   | D                 | P                 | D              |
+| Model             | Equation Discovery    | Sparse Learning   | One-step Ahead |
+| :----             | :------------:        | :--------------:  | :-----------:  |
+| Linear SDOF       | A                     | A                 | A              |
+| Duffing SDOF      | A                     | A                 | A              |
+| Linear MDOF       | A                     | A                 | A              |
+| Duffing MDOF      | A                     | A                 | A              |
+| Beam - Free       | D                     | D                 | D              |
+| Beam - Forced     | P                     | P                 | P              |
 <!-- | Elastic waves     | N/A               | D                 | N/A            | -->
 
 # General PINN Definition
