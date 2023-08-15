@@ -12,6 +12,16 @@ def max_mag_data(data,axis=None):
         data_max = np.max(np.abs(data),axis=axis)
     return data_max
 
+def range_data(data,axis=None):
+    if torch.is_tensor(data):
+        if axis==None:
+            data_range = torch.max(torch.max(data)) - torch.min(torch.min(data))
+        else:
+            data_range = torch.max(data,dim=axis)[0] - torch.min(data,dim=axis)[0]
+    else:
+        data_range = np.max(data, axis=axis) - np.min(data, axis=axis)
+    return data_range
+
 def normalise(data,norm_type="var",norm_dir="all"):
     if norm_type=="var":
         if len(data.shape)>1 and norm_dir=="axis":
@@ -24,9 +34,11 @@ def normalise(data,norm_type="var",norm_dir="all"):
         return data_norm, (mean, std)
     elif norm_type=="range":
         if len(data.shape)>1 and norm_dir=="axis":
-            dmax = max_mag_data(data,axis=0)
+            # dmax = max_mag_data(data,axis=0)
+            dmax = range_data(data,axis=0)
         else:
-            dmax = max_mag_data(data)
+            # dmax = max_mag_data(data)
+            dmax = range_data(data)
         data_norm = data/dmax
         return data_norm, dmax
 
@@ -52,17 +64,173 @@ class bbnn(nn.Module):
         return self.net
         
     def forward(self, x):
-        x = self.net(x)
-        return x
+        y = self.net(x)
+        return y
 
-    def predict(self, tp):
-        yp = self.forward(tp)
+    def predict(self, xp):
+        yp = self.forward(xp)
         return yp
 
     def loss_func(self, x_obs, y_obs):
         yp_obs = self.forward(x_obs)
-        loss = torch.mean((yp_obs - y_obs)**2)
+        if yp_obs.shape[1]>1:
+            loss = torch.sum(torch.mean((yp_obs - y_obs)**2,dim=0),dim=0)
+        else:
+            loss = torch.mean((yp_obs - y_obs)**2)
         return loss
+
+
+class sdof_pinn_ss(nn.Module):
+
+    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
+        super().__init__()
+        self.n_input = N_INPUT
+        self.n_output = N_OUTPUT
+        self.n_hidden = N_HIDDEN
+        self.n_layers = N_LAYERS
+        self.activation = nn.Tanh
+
+        self.build_net()
+    
+    def build_net(self):
+        self.net = nn.Sequential(
+            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
+            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
+            nn.Linear(self.n_hidden, self.n_output)
+            )
+        return self.net
+
+    def forward(self, x, G=0.0, D=1.0):
+        x = G + D * self.net(x)
+        return x
+
+    def configure(self, **config):
+
+        self.config = config
+
+        self.nonlinearity = config["nonlinearity"]
+        self.forcing = config["forcing"]
+        self.param_type = config["phys_params"]["par_type"]
+
+        self.set_phys_params()
+        self.set_norm_params()
+
+    def set_phys_params(self):
+        config = self.config
+        self.init_conds = config["init_conds"]
+        self.M = torch.tensor([[config["phys_params"]['m']]])
+        self.H = torch.cat((torch.zeros((1,1)),torch.linalg.inv(self.M)), dim=0)
+        match config:
+            case {"phys_params":{"par_type":"constant"},"nonlinearity":"linear"}:
+                self.K = torch.tensor([[config["phys_params"]['k']]])
+                self.C = torch.tensor([[config["phys_params"]['c']]])
+            case {"phys_params":{"par_type":"constant"},"nonlinearity":"cubic"}:
+                self.Kn = torch.tensor([[config["phys_params"]['k3']]])
+                self.K = torch.tensor([[config["phys_params"]['k']]])
+                self.C = torch.tensor([[config["phys_params"]['c']]])
+            case {"phys_params":{"par_type":"variable"},"nonlinearity":"linear"}:
+                self.register_parameter("C", nn.Parameter(torch.tensor([[config["phys_params"]["c"]]])))
+                self.register_parameter("K", nn.Parameter(torch.tensor([[config["phys_params"]["k"]]])))
+            case {"phys_params":{"par_type":"variable"},"nonlinearity":"cubic"}:
+                self.register_parameter("C", nn.Parameter(torch.tensor([[config["phys_params"]["c"]]])))
+                self.register_parameter("K", nn.Parameter(torch.tensor([[config["phys_params"]["k"]]])))
+                self.register_parameter("Kn", nn.Parameter(torch.tensor([[config["phys_params"]["k3"]]])))
+        match config["forcing"]:
+            case dict():
+                self.force = torch.tensor(config["forcing"]["F_hat"]).reshape(-1,1).requires_grad_()
+
+    def set_norm_params(self):
+        config = self.config
+        self.alpha_t = torch.tensor(config["alphas"]["t"], dtype=torch.float32)
+        self.alpha_z = torch.tensor(config["alphas"]["z"].reshape(-1,1), dtype=torch.float32)
+        if config["forcing"] != None:
+            self.alpha_F = torch.tensor(config["alphas"]["F"], dtype=torch.float32)
+        self.alpha_k = torch.tensor(config["alphas"]["k"], dtype=torch.float32)
+        self.alpha_c = torch.tensor(config["alphas"]["c"], dtype=torch.float32)
+        if config["nonlinearity"] == "cubic":
+            self.alpha_k3 = torch.tensor(config["alphas"]["k3"], dtype=torch.float32)
+
+    def calc_residuals(self, t_pde_hat, t_obs, z_obs, epoch):
+
+        # observation residual
+        zh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
+        R_obs = zh_obs - z_obs
+
+        # ode values
+        ic_id = torch.argwhere((t_pde_hat[:,0]==torch.tensor(0.0)))
+        zh_pde_hat = self.forward(t_pde_hat)   # N_y-hat (in Ω_ode)
+        dzdt = torch.zeros_like(zh_pde_hat)
+        for i in range(2):
+            dzdt[:,i] = torch.autograd.grad(zh_pde_hat[:,i], t_pde_hat, torch.ones_like(zh_pde_hat[:,i]), create_graph=True)[0][:,0]# ∂_t-hat N_z-hat
+
+        # calculate ic residual
+        R_ic1 = zh_pde_hat[ic_id,0]*self.alpha_z[0]
+        R_ic2 = dzdt[ic_id,0]*(self.alpha_z[0]/self.alpha_t)
+        R_ic3 = dzdt[ic_id,1]*(self.alpha_z[1]/self.alpha_t)
+        R_ic = torch.tensor([R_ic1, R_ic2, R_ic3])
+        
+        # retrieve physical parameters
+        if self.config["phys_params"]["par_type"] == "constant":
+            K = self.K
+            C = self.C
+        elif self.config["phys_params"]["par_type"] == "variable":
+            K = self.K * self.alpha_k
+            C = self.C * self.alpha_c
+        A = torch.cat((
+            torch.cat((torch.zeros((1,1)),torch.eye(1)), dim=1),
+            torch.cat((-torch.linalg.inv(self.M)@K, -torch.linalg.inv(self.M)@C), dim=1)
+            ), dim=0).requires_grad_()
+        H = self.H
+        if self.config["nonlinearity"] == "cubic":
+            if self.config["phys_params"]["par_type"] == "constant":
+                Kn = self.Kn
+            elif self.config["phys_params"]["par_type"] == "variable":
+                Kn = self.Kn * self.alpha_k3
+            An = torch.cat((torch.zeros((1,1)),-torch.linalg.inv(self.M)@Kn), dim=0)
+
+        match self.config:
+            case {"nonlinearity":"linear","forcing":None}:
+                R_ = (self.alpha_z/self.alpha_t)*dzdt.T - A@(self.alpha_z*zh_pde_hat.T)
+            case {"nonlinearity":"cubic","forcing":None}:
+                zn = (self.alpha_z*zh_pde_hat.T)**3
+                R_ = (self.alpha_z/self.alpha_t)*dzdt.T - A@(self.alpha_z*zh_pde_hat.T) - An@zn
+            case {"nonlinearity":"linear","forcing":{}}:
+                R_ = (self.alpha_z/self.alpha_t)*dzdt.T - A@(self.alpha_z*zh_pde_hat.T) - H@(self.alpha_F*self.force.T)
+            case {"nonlinearity":"cubic","forcing":{}}:
+                zn = (self.alpha_z[0]*zh_pde_hat[:,0].T.reshape(1,-1))**3
+                R_ = (self.alpha_z/self.alpha_t)*dzdt.T - A@(self.alpha_z*zh_pde_hat.T) - An@zn - H@(self.alpha_F*self.force.T)
+        R_ode = R_[1,:].T
+        R_cc = R_[0,:].T
+
+        if epoch>10000:
+            print('')
+
+        return {
+            "R_obs" : R_obs,
+            "R_ic" : R_ic,
+            "R_cc" : R_cc,
+            "R_ode" : R_ode
+        }
+
+    def loss_func(self, t_pde, t_obs, x_obs, lambdas, epoch):
+        residuals = self.calc_residuals(t_pde, t_obs, x_obs, epoch)
+        R_obs = residuals["R_obs"]
+        R_ic = residuals["R_ic"]
+        R_cc = residuals["R_cc"]
+        R_ode = residuals["R_ode"]
+
+        L_obs = lambdas['obs'].item() * torch.mean(R_obs**2)
+        L_ic = lambdas['ic'].item() * torch.mean(R_ic**2)
+        L_cc = lambdas['cc'].item() * torch.mean(R_cc**2)
+        L_ode = lambdas['ode'].item() * torch.mean(R_ode**2)
+        loss = L_obs + L_ic + L_cc + L_ode
+
+        return loss, [L_obs, L_ic, L_cc, L_ode]
+
+    def predict(self, tp):
+        zp = self.forward(tp)
+        return zp
+
 
 class sdof_pinn(nn.Module):
 
@@ -193,14 +361,14 @@ class sdof_pinn(nn.Module):
         xh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
         R_obs = xh_obs - x_obs
 
-        # ode values
+        # collocation values
         ic_id = torch.argwhere((t_pde_hat[:,0]==torch.tensor(0.0)))
-        self.D = torch.ones_like(t_pde_hat)
-        self.D[ic_id] = 0
-        self.D = self.D.requires_grad_()
-        self.G = torch.zeros_like(t_pde_hat)
-        self.G[ic_id] = self.init_conds["x0"]/self.alpha_x
-        self.G = self.G.requires_grad_()
+        # self.D = torch.ones_like(t_pde_hat)
+        # self.D[ic_id] = 0
+        # self.D = self.D.requires_grad_()
+        # self.G = torch.zeros_like(t_pde_hat)
+        # self.G[ic_id] = self.init_conds["x0"]/self.alpha_x
+        # self.G = self.G.requires_grad_()
         xh_pde_hat = self.forward(t_pde_hat)   # N_y-hat (in Ω_ode)
         dx = torch.autograd.grad(xh_pde_hat, t_pde_hat, torch.ones_like(xh_pde_hat), create_graph=True)[0]  # ∂_t-hat N_y-hat
         dx2 = torch.autograd.grad(dx, t_pde_hat, torch.ones_like(dx), create_graph=True)[0]  # ∂^2_t-hat N_y-hat
@@ -254,7 +422,7 @@ class sdof_pinn(nn.Module):
         R_ode = residuals["R_ode"]
 
         L_obs = lambdas['obs'].item() * torch.mean(R_obs**2)
-        L_ic = lambdas['ic'][0].item() * R_ic[0]**2 + lambdas['ic'][1].item() * R_ic[1]**2 #+ lambdas['ic'][2].item() * R_ic[2]**2
+        L_ic = lambdas['ic'].item() * R_ic[0]**2 + lambdas['ic'].item() * R_ic[1]**2 #+ lambdas['ic'][2].item() * R_ic[2]**2
         L_ode = lambdas['ode'].item() * torch.mean(R_ode**2)
         loss = L_obs + L_ic + L_ode
 
@@ -549,5 +717,5 @@ class ParamClipper(object):
     def __call__(self, module):
         if hasattr(module, 'phys_params'):
             params = module.phys_params.data
-            params = params.clamp(0,1)
+            params = params.clamp(min=0, max=None)
             module.phys_params.data = params

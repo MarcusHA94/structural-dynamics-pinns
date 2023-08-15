@@ -95,7 +95,7 @@ def generate_excitation(time, **exc_config):
                     np.random.seed(seed)
                 case _:
                     np.random.seed(43810)
-            phases = np.random.rand(freqs.shape[0], 1)
+            phases = np.random.rand(freqs.shape[0])
             F_mat = np.sin(time @ freqs.T + phases.T)
             F = F_mat @ Sx
     
