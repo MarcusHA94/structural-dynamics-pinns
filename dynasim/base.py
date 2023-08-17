@@ -3,21 +3,14 @@ from dynasim.simulators import *
 from dynasim.actuators import shaker
 import warnings
 
-class mdof_system:
+class state_space_system:
     '''
-    Base class for generic mdof system
+    Base class for any state space represented system
     '''
 
-    def __init__(self, M=None, C=None, K=None, Cn=None, Kn=None):
+    def __init__(self) -> int:
 
-        self.M = M
-        self.C = C
-        self.K = K
-        self.Cn = Cn
-        self.Kn = Kn
-        self.dofs = M.shape[0]
-
-        self.gen_state_matrices()
+        return 0
 
     def gen_state_matrices(self) -> int:
         '''
@@ -91,6 +84,38 @@ class mdof_system:
         
         # simulate
         return self.simulator.sim(tt, z0)
+
+class cont_ss_system(state_space_system):
+    '''
+    Base class for continuous system represented in the state space
+    '''
+
+    def __init__(self, M=None, C=None, K=None, modes=1):
+
+        self.M = M
+        self.C = C
+        self.K = K
+        self.Cn = None  # no nonlinearities for now
+        self.Kn = None  # no nonlinearities for now
+        self.dofs = modes
+
+        self.gen_state_matrices
+
+class mdof_system(state_space_system):
+    '''
+    Base class for generic mdof system
+    '''
+
+    def __init__(self, M=None, C=None, K=None, Cn=None, Kn=None):
+
+        self.M = M
+        self.C = C
+        self.K = K
+        self.Cn = Cn
+        self.Kn = Kn
+        self.dofs = M.shape[0]
+
+        self.gen_state_matrices()
 
 
 
