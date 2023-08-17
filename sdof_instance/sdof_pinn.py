@@ -34,11 +34,16 @@ def normalise(data,norm_type="var",norm_dir="all"):
         return data_norm, (mean, std)
     elif norm_type=="range":
         if len(data.shape)>1 and norm_dir=="axis":
-            # dmax = max_mag_data(data,axis=0)
             dmax = range_data(data,axis=0)
         else:
-            # dmax = max_mag_data(data)
             dmax = range_data(data)
+        data_norm = data/dmax
+        return data_norm, dmax
+    elif norm_type=="max":
+        if len(data.shape)>1 and norm_dir=="axis":
+            dmax = max_mag_data(data,axis=0)
+        else:
+            dmax = max_mag_data(data)
         data_norm = data/dmax
         return data_norm, dmax
 

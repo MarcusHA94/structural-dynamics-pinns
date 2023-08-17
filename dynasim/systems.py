@@ -117,6 +117,8 @@ class cont_beam(cont_ss_system):
 
         self.gen_state_matrices()
 
+        return self.xx, self.phi_n
+
 
 class symmetric(mdof_system):
     '''

@@ -13,6 +13,16 @@ def max_mag_data(data,axis=None):
         data_max = np.max(np.abs(data),axis=axis)
     return data_max
 
+def range_data(data,axis=None):
+    if torch.is_tensor(data):
+        if axis==None:
+            data_range = torch.max(torch.max(data)) - torch.min(torch.min(data))
+        else:
+            data_range = torch.max(data,dim=axis)[0] - torch.min(data,dim=axis)[0]
+    else:
+        data_range = np.max(data, axis=axis) - np.min(data, axis=axis)
+    return data_range
+
 def normalise(data,norm_type="var",norm_dir="all"):
     if norm_type=="var":
         if len(data.shape)>1 and norm_dir=="axis":
@@ -24,6 +34,13 @@ def normalise(data,norm_type="var",norm_dir="all"):
         data_norm = (data-mean)/std
         return data_norm, (mean, std)
     elif norm_type=="range":
+        if len(data.shape)>1 and norm_dir=="axis":
+            dmax = range_data(data,axis=0)
+        else:
+            dmax = range_data(data)
+        data_norm = data/dmax
+        return data_norm, dmax
+    elif norm_type=="max":
         if len(data.shape)>1 and norm_dir=="axis":
             dmax = max_mag_data(data,axis=0)
         else:
@@ -126,7 +143,6 @@ class mdof_pinn(nn.Module):
         # Collocation set
         t_col = prediction['t_hat']
         self.t_col = t_col.requires_grad_()
-        self.f_col = prediction['F_hat']
         if prediction['F_hat'] is not None:
             self.f_col = prediction['F_hat'].requires_grad_()
         
