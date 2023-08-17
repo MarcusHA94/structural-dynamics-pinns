@@ -2,8 +2,12 @@ import numpy as np
 import torch
 from math import pi
 import scipy
+from typing import Union, Tuple
 
-def gen_ndof_cantilever(m_,c_,k_,ndof=None,return_numpy=False,connected_damping=True):
+Tensor = Union[torch.Tensor, np.ndarray]
+TensorFloat = Union[torch.Tensor, float]
+
+def gen_ndof_cantilever(m_: TensorFloat, c_: TensorFloat, k_: TensorFloat, ndof: int = None, return_numpy: bool = False, connected_damping: bool = True) -> Tuple[Tensor, Tensor, Tensor]:
     if torch.is_tensor(m_):
         ndof = m_.shape[0]
     else:
@@ -32,7 +36,7 @@ def gen_ndof_cantilever(m_,c_,k_,ndof=None,return_numpy=False,connected_damping=
     else:
         return M, C, K
 
-def mdof_simulate(time, **config):
+def mdof_simulate(time: np.ndarray, config: dict) -> Tuple[torch.Tensor, torch.Tensor]:
 
     ndof = config['n_dofs']
     dt = time[1]-time[0]
@@ -93,7 +97,7 @@ def mdof_simulate(time, **config):
     
     return torch.tensor(z[:ndof,:],dtype=torch.float32).T, torch.tensor(z[ndof:,:],dtype=torch.float32).T
 
-def add_noise(x, db=-10.0, seed=43810):
+def add_noise(x: np.ndarray, db: float = -10.0, seed: int = 43810) -> np.ndarray:
 
     ns = x.shape[0]
     nd = x.shape[1]
@@ -105,8 +109,7 @@ def add_noise(x, db=-10.0, seed=43810):
         x_noisy[:,i] = x[:,i] + noise_x
     return x_noisy
 
-
-def generate_excitation(time, **exc_config):
+def generate_excitation(time: np.ndarray, exc_config: dict) -> np.ndarray:
 
     F0 = exc_config["F0"]
     n_modes = exc_config["n_dofs"]

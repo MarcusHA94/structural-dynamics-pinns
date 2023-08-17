@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from mdof_oscillators import gen_ndof_cantilever
 
-def max_mag_data(data,axis=None):
+from typing import Tuple, Union
+Tensor = Union[torch.Tensor, np.ndarray]
+
+def max_mag_data(data: Tensor, axis: int = None) -> Tensor:
+    """
+    Compute the maximum magnitude of data along the specified axis.
+    """
     if torch.is_tensor(data):
         if axis==None:
             data_max = torch.max(torch.max(torch.abs(data)))
@@ -13,7 +18,10 @@ def max_mag_data(data,axis=None):
         data_max = np.max(np.abs(data),axis=axis)
     return data_max
 
-def range_data(data,axis=None):
+def range_data(data: Tensor, axis: int = None) -> Tensor:
+    """
+    Compute the range of data along the specified axis.
+    """
     if torch.is_tensor(data):
         if axis==None:
             data_range = torch.max(torch.max(data)) - torch.min(torch.min(data))
@@ -23,7 +31,10 @@ def range_data(data,axis=None):
         data_range = np.max(data, axis=axis) - np.min(data, axis=axis)
     return data_range
 
-def normalise(data,norm_type="var",norm_dir="all"):
+def normalise(data: Tensor, norm_type: str = "var", norm_dir: str = "all") -> Tuple[Tensor, Tuple[Tensor, Tensor]]:
+    """
+    Normalize data based on the specified normalization type and direction.
+    """
     if norm_type=="var":
         if len(data.shape)>1 and norm_dir=="axis":
             mean = data.mean(axis=0)
@@ -47,11 +58,10 @@ def normalise(data,norm_type="var",norm_dir="all"):
             dmax = max_mag_data(data)
         data_norm = data/dmax
         return data_norm, dmax
-    
 
 class mdof_pinn(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: dict):
         super().__init__()
         self.n_input = config["n_input"]
         self.n_output = config["n_output"]
@@ -64,20 +74,43 @@ class mdof_pinn(nn.Module):
 
         self.configure(**config)
 
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
+    def build_net(self) -> None:
+        # Construct the neural network layers
+        layers = [
+            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
+        ]  # First layer
+        layers.extend(
+            [
+                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
+                for _ in range(self.n_layers - 1)
+            ]
+        )  # Hidden layers
+        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
+
+        self.net = nn.Sequential(*layers)  # Create the neural network
     
-    def forward(self, t, G=0.0, D=1.0):
-        x = self.net(t)
-        y = G + D * x
+    def forward(self, x: torch.Tensor, G: torch.Tensor = torch.tensor(0.0), D: torch.Tensor = torch.tensor(1.0)) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input to network
+            G (torch.Tensor): Tensor of BC values
+            D (torch.Tensor): Tensor of BC extension mask
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        y = G + D * self.net(x)
         return y
     
-    def configure(self, **config):
+    def configure(self, config: dict) -> None:
+        """
+        Configures neural network
+
+        Args:
+            config (dict): Configuration parameters
+        """
 
         self.config = config
 
@@ -89,7 +122,10 @@ class mdof_pinn(nn.Module):
         self.set_phys_params()
         self.set_norm_params()
 
-    def set_phys_params(self):
+    def set_phys_params(self) -> None:
+        """
+        Set physical parameters of model, and adds them as either constants or parameters for optimisation
+        """
         config = self.config
         self.param_attrs = {}
         for param_name, param_dict in config["phys_params"].items():
@@ -118,7 +154,10 @@ class mdof_pinn(nn.Module):
             case dict():
                 self.force = torch.tensor(config["forcing"])
 
-    def set_norm_params(self):
+    def set_norm_params(self) -> None:
+        """
+        Set normalisation parameters of the model
+        """
         config = self.config
         self.alpha_t = config["alphas"]["t"]
         self.alpha_x = config["alphas"]["x"]
@@ -130,7 +169,13 @@ class mdof_pinn(nn.Module):
             if param_dict["type"] == "variable":
                 setattr(self,"alpha_"+param_name[:-1],config["alphas"][param_name[:-1]])
 
-    def set_colls_and_obs(self, data, prediction):
+    def set_colls_and_obs(self, data: dict, prediction: dict) -> None:
+        """
+        Sets collocation and observation data
+        Args:
+            data (dict): dictionary containing data in observation domain
+            prediction (dict): dictionary containing collocation domain data
+        """
 
         # Observation set 
         self.x_obs = data['x_hat']  # displacement input
@@ -148,7 +193,14 @@ class mdof_pinn(nn.Module):
         
         self.ic_id = torch.argwhere(t_col[:,0]==torch.tensor(0.0)).view(-1)
 
-    def Kn_func(self, kn_):
+    def Kn_func(self, kn_: torch.Tensor) -> torch.Tensor:
+        """
+        Generates Kn matrix
+        
+        Args:
+            kn_ (torch.Tensor): vector of kn values
+    
+        """
         Kn = torch.zeros((self.n_dof,self.n_dof), dtype=torch.float32)
         for n in range(self.n_dof):
             Kn[n,n] = kn_[n]
@@ -156,7 +208,14 @@ class mdof_pinn(nn.Module):
             Kn[n,n+1] = -kn_[n+1]
         return Kn.requires_grad_()
     
-    def calc_residuals(self):
+    def calc_residuals(self) -> dict:
+        """
+        Calculates residuals for loss functions
+
+        Returns:
+            dict: Tensors of residuals
+
+        """
 
         if self.switches['obs']:
             # generate prediction at observation points
@@ -244,13 +303,29 @@ class mdof_pinn(nn.Module):
             "R_ode" : R_ode
         }
     
-    def set_switches(self, lambdas):
+    def set_switches(self, lambdas: dict) -> None:
+        """
+        Sets switches for residual/loss calculation to improve performance of unecessary calculation
+        Args:
+            lambdas (dict): dictionary of lambda weighting parameters
+        """
         switches = {}
         for key, value in lambdas.items():
             switches[key] = value>0.0
         self.switches = switches
 
-    def loss_func(self, lambdas):
+    def loss_func(self, lambdas: dict) -> Tuple[torch.Tensor, list, dict]:
+        """
+        Calculate the loss values.
+
+        Args:
+            lambdas (dict): Dictionary of lambda weighting parameters
+
+        Returns:
+            torch.Tensor: Total loss
+            list: list containing individual losses
+            dict: dictionary of residuals
+        """
         residuals = self.calc_residuals()
         R_obs = residuals["R_obs"]
         R_ic = residuals["R_ic"]
@@ -265,41 +340,83 @@ class mdof_pinn(nn.Module):
         loss = L_obs + L_ic + L_cc + L_ode
         return loss, [L_obs, L_ic, L_cc, L_ode], residuals
     
-    def predict(self):
-        xp = self.forward(self.t_col)
-        return xp
+    def predict(self) -> torch.Tensor:
+        """
+        Predict state values
+        """
+        zp = self.forward(self.t_col)
+        return zp
 
 class bbnn(nn.Module):
     
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
+    def __init__(self, N_INPUT: int, N_OUTPUT: int, N_HIDDEN: int, N_LAYERS: int):
         super().__init__()
         self.n_input = N_INPUT
         self.n_output = N_OUTPUT
         self.n_hidden = N_HIDDEN
         self.n_layers = N_LAYERS
+        # self.activation = nn.ReLU
         self.activation = nn.Tanh
 
         self.build_net()
     
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
-        
-    def forward(self, x):
-        x = self.net(x)
-        return x
+    def build_net(self) -> None:
+        # Construct the neural network layers
+        layers = [
+            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
+        ]  # First layer
+        layers.extend(
+            [
+                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
+                for _ in range(self.n_layers - 1)
+            ]
+        )  # Hidden layers
+        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
 
-    def predict(self, tp):
-        yp = self.forward(tp)
+        self.net = nn.Sequential(*layers)  # Create the neural network
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        y = self.net(x)
+        return y
+
+    def predict(self, xp: torch.Tensor) -> torch.Tensor:
+        """
+        Make predictions using the neural network.
+
+        Args:
+            xp (torch.Tensor): Input tensor for prediction.
+
+        Returns:
+            torch.Tensor: Predicted output tensor.
+        """
+        yp = self.forward(xp)
         return yp
 
-    def loss_func(self, x_obs, y_obs):
+    def loss_func(self, x_obs: torch.Tensor, y_obs: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the loss function.
+
+        Args:
+            x_obs (torch.Tensor): Observed input tensor.
+            y_obs (torch.Tensor): Observed output tensor.
+
+        Returns:
+            torch.Tensor: Calculated loss.
+        """
         yp_obs = self.forward(x_obs)
-        loss = torch.mean((yp_obs - y_obs)**2)
+        if yp_obs.shape[1]>1:
+            loss = torch.sum(torch.mean((yp_obs - y_obs)**2,dim=0),dim=0)
+        else:
+            loss = torch.mean((yp_obs - y_obs)**2)
         return loss
 
 class ParamClipper(object):

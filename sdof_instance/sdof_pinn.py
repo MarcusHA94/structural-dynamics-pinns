@@ -2,7 +2,13 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-def max_mag_data(data,axis=None):
+from typing import Tuple, Union
+Tensor = Union[torch.Tensor, np.ndarray]
+
+def max_mag_data(data: Tensor, axis: int = None) -> Tensor:
+    """
+    Compute the maximum magnitude of data along the specified axis.
+    """
     if torch.is_tensor(data):
         if axis==None:
             data_max = torch.max(torch.max(torch.abs(data)))
@@ -12,7 +18,10 @@ def max_mag_data(data,axis=None):
         data_max = np.max(np.abs(data),axis=axis)
     return data_max
 
-def range_data(data,axis=None):
+def range_data(data: Tensor, axis: int = None) -> Tensor:
+    """
+    Compute the range of data along the specified axis.
+    """
     if torch.is_tensor(data):
         if axis==None:
             data_range = torch.max(torch.max(data)) - torch.min(torch.min(data))
@@ -22,7 +31,10 @@ def range_data(data,axis=None):
         data_range = np.max(data, axis=axis) - np.min(data, axis=axis)
     return data_range
 
-def normalise(data,norm_type="var",norm_dir="all"):
+def normalise(data: Tensor, norm_type: str = "var", norm_dir: str = "all") -> Tuple[Tensor, Tuple[Tensor, Tensor]]:
+    """
+    Normalize data based on the specified normalization type and direction.
+    """
     if norm_type=="var":
         if len(data.shape)>1 and norm_dir=="axis":
             mean = data.mean(axis=0)
@@ -49,7 +61,7 @@ def normalise(data,norm_type="var",norm_dir="all"):
 
 class bbnn(nn.Module):
     
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
+    def __init__(self, N_INPUT: int, N_OUTPUT: int, N_HIDDEN: int, N_LAYERS: int):
         super().__init__()
         self.n_input = N_INPUT
         self.n_output = N_OUTPUT
@@ -60,23 +72,58 @@ class bbnn(nn.Module):
 
         self.build_net()
     
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
+    def build_net(self) -> None:
+        # Construct the neural network layers
+        layers = [
+            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
+        ]  # First layer
+        layers.extend(
+            [
+                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
+                for _ in range(self.n_layers - 1)
+            ]
+        )  # Hidden layers
+        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
+
+        self.net = nn.Sequential(*layers)  # Create the neural network
         
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
         y = self.net(x)
         return y
 
-    def predict(self, xp):
+    def predict(self, xp: torch.Tensor) -> torch.Tensor:
+        """
+        Make predictions using the neural network.
+
+        Args:
+            xp (torch.Tensor): Input tensor for prediction.
+
+        Returns:
+            torch.Tensor: Predicted output tensor.
+        """
         yp = self.forward(xp)
         return yp
 
-    def loss_func(self, x_obs, y_obs):
+    def loss_func(self, x_obs: torch.Tensor, y_obs: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the loss function.
+
+        Args:
+            x_obs (torch.Tensor): Observed input tensor.
+            y_obs (torch.Tensor): Observed output tensor.
+
+        Returns:
+            torch.Tensor: Calculated loss.
+        """
         yp_obs = self.forward(x_obs)
         if yp_obs.shape[1]>1:
             loss = torch.sum(torch.mean((yp_obs - y_obs)**2,dim=0),dim=0)
@@ -87,7 +134,7 @@ class bbnn(nn.Module):
 
 class sdof_pinn_ss(nn.Module):
 
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
+    def __init__(self, N_INPUT: int, N_OUTPUT: int, N_HIDDEN: int, N_LAYERS: int):
         super().__init__()
         self.n_input = N_INPUT
         self.n_output = N_OUTPUT
@@ -97,19 +144,43 @@ class sdof_pinn_ss(nn.Module):
 
         self.build_net()
     
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
+    def build_net(self) -> None:
+        # Construct the neural network layers
+        layers = [
+            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
+        ]  # First layer
+        layers.extend(
+            [
+                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
+                for _ in range(self.n_layers - 1)
+            ]
+        )  # Hidden layers
+        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
 
-    def forward(self, x, G=0.0, D=1.0):
-        x = G + D * self.net(x)
-        return x
+        self.net = nn.Sequential(*layers)  # Create the neural network
 
-    def configure(self, **config):
+    def forward(self, x: torch.Tensor, G: torch.Tensor = torch.tensor(0.0), D: torch.Tensor = torch.tensor(1.0)) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input to network
+            G (torch.Tensor): Tensor of BC values
+            D (torch.Tensor): Tensor of BC extension mask
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        y = G + D * self.net(x)
+        return y
+
+    def configure(self, config: dict) -> int:
+        """
+        Configures neural network
+
+        Args:
+            config (dict): Configuration parameters
+        """
 
         self.config = config
 
@@ -120,7 +191,12 @@ class sdof_pinn_ss(nn.Module):
         self.set_phys_params()
         self.set_norm_params()
 
-    def set_phys_params(self):
+        return 0
+
+    def set_phys_params(self) -> int:
+        """
+        Set physical parameters of model, and adds them as either constants or parameters for optimisation
+        """
         config = self.config
         self.init_conds = config["init_conds"]
         self.M = torch.tensor([[config["phys_params"]['m']]])
@@ -144,7 +220,12 @@ class sdof_pinn_ss(nn.Module):
             case dict():
                 self.force = torch.tensor(config["forcing"]["F_hat"]).reshape(-1,1).requires_grad_()
 
-    def set_norm_params(self):
+        return 0
+
+    def set_norm_params(self) -> int:
+        """
+        Set normalisation parameters of the model
+        """
         config = self.config
         self.alpha_t = torch.tensor(config["alphas"]["t"], dtype=torch.float32)
         self.alpha_z = torch.tensor(config["alphas"]["z"].reshape(-1,1), dtype=torch.float32)
@@ -155,7 +236,22 @@ class sdof_pinn_ss(nn.Module):
         if config["nonlinearity"] == "cubic":
             self.alpha_k3 = torch.tensor(config["alphas"]["k3"], dtype=torch.float32)
 
-    def calc_residuals(self, t_pde_hat, t_obs, z_obs, hard_bc=False):
+        return 0
+
+    def calc_residuals(self, t_pde_hat: torch.Tensor, t_obs: torch.Tensor, z_obs: torch.Tensor, hard_bc: bool=False) -> dict:
+        """
+        Calculates residuals for loss functions
+
+        Args:
+            t_pde_hat (torch.Tensor): Tensor of time values in collocation domain
+            t_obs (torch.Tensor): Tensor of time values in observation domain
+            z_obs (torch.Tensor): Tensor of state values in observation domain
+            hard_bc (bool): Select whether to include hard boundary conditions
+
+        Returns:
+            dict: Tensors of residuals
+
+        """
 
         if hard_bc:
             G = 0.0
@@ -223,8 +319,21 @@ class sdof_pinn_ss(nn.Module):
             "R_ode" : R_ode
         }
 
-    def loss_func(self, t_pde, t_obs, x_obs, lambdas, hard_bc=False):
-        residuals = self.calc_residuals(t_pde, t_obs, x_obs, hard_bc)
+    def loss_func(self, t_pde: torch.Tensor, t_obs: torch.Tensor, z_obs: torch.Tensor, lambdas: dict, hard_bc: bool = False) -> Tuple[torch.Tensor, list]:
+        """
+        Calculate the loss values.
+
+        Args:
+            t_pde (torch.Tensor): Tensor of time values in collocation domain
+            t_obs (torch.Tensor): Tensor of time values in observation domain
+            z_obs (torch.Tensor): Tensor of state values in observation domain
+            lambdas (dict): Dictionary of lambda weighting parameters
+            hard_bc (bool): Select whether to include hard boundary conditions
+
+        Returns:
+            dict: Values of individual loss functions
+        """
+        residuals = self.calc_residuals(t_pde, t_obs, z_obs, hard_bc)
         R_obs = residuals["R_obs"]
         R_ic = residuals["R_ic"]
         R_cc = residuals["R_cc"]
@@ -238,7 +347,17 @@ class sdof_pinn_ss(nn.Module):
 
         return loss, [L_obs, L_ic, L_cc, L_ode]
 
-    def predict(self, tp, hard_bc=False):
+    def predict(self, tp: torch.Tensor, hard_bc: bool = False) -> torch.Tensor:
+        """
+        Predict state values from any input
+
+        Args:
+            tp (torch.Tensor): values of time over which to predict
+            hard_bc (bool): Whether to include hard boundary conditions
+
+        Returns:
+            zp (torch.Tensor): values of predicted state
+        """
         if hard_bc:
             G = 0.0
             D = torch.cat((torch.zeros((1,2)), torch.ones(tp.shape[0]-1, 2)), dim=0)
@@ -250,7 +369,7 @@ class sdof_pinn_ss(nn.Module):
 
 class sdof_pinn(nn.Module):
 
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
+    def __init__(self, N_INPUT: int, N_OUTPUT: int, N_HIDDEN: int, N_LAYERS: int):
         super().__init__()
         self.n_input = N_INPUT
         self.n_output = N_OUTPUT
@@ -260,19 +379,43 @@ class sdof_pinn(nn.Module):
 
         self.build_net()
     
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
+    def build_net(self) -> None:
+        # Construct the neural network layers
+        layers = [
+            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
+        ]  # First layer
+        layers.extend(
+            [
+                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
+                for _ in range(self.n_layers - 1)
+            ]
+        )  # Hidden layers
+        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
 
-    def forward(self, x, G=0.0, D=1.0):
-        x = G + D * self.net(x)
-        return x
+        self.net = nn.Sequential(*layers)  # Create the neural network
 
-    def configure(self, **config):
+    def forward(self, x: torch.Tensor, G: torch.Tensor = torch.tensor(0.0), D: torch.Tensor = torch.tensor(1.0)) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input to network
+            G (torch.Tensor): Tensor of BC values
+            D (torch.Tensor): Tensor of BC extension mask
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        y = self.net(x)
+        return y
+
+    def configure(self, config: dict) -> int:
+        """
+        Configures neural network
+
+        Args:
+            config (dict): Configuration parameters
+        """
 
         self.config = config
 
@@ -283,7 +426,12 @@ class sdof_pinn(nn.Module):
         self.set_phys_params()
         self.set_norm_params()
 
-    def set_phys_params(self):
+        return 0
+
+    def set_phys_params(self) -> int:
+        """
+        Set physical parameters of model, and adds them as either constants or parameters for optimisation
+        """
         config = self.config
         self.init_conds = config["init_conds"]
         match config:
@@ -303,8 +451,12 @@ class sdof_pinn(nn.Module):
         match config["forcing"]:
             case dict():
                 self.force = torch.tensor(config["forcing"]["F_hat"]).reshape(-1,1).requires_grad_()
+        return 0
 
-    def set_norm_params(self):
+    def set_norm_params(self) -> int:
+        """
+        Set normalisation parameters of the model
+        """
         config = self.config
         self.alpha_t = config["alphas"]["t"]
         self.alpha_x = config["alphas"]["x"]
@@ -370,8 +522,21 @@ class sdof_pinn(nn.Module):
                     "d2" : alpha_d2 * config["ode_norm_Lambda"],
                     "ff" : alpha_ff * config["ode_norm_Lambda"]
                 }
+        return 0
 
-    def calc_residuals(self, t_pde_hat, t_obs, x_obs):
+    def calc_residuals(self, t_pde_hat: torch.Tensor, t_obs: torch.Tensor, x_obs: torch.Tensor) -> dict:
+        """
+        Calculates residuals for loss functions
+
+        Args:
+            t_pde_hat (torch.Tensor): Tensor of time values in collocation domain
+            t_obs (torch.Tensor): Tensor of time values in observation domain
+            x_obs (torch.Tensor): Tensor of displacement values in observation domain
+
+        Returns:
+            dict: Tensors of residuals
+
+        """
 
         # observation residual
         xh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
@@ -431,7 +596,19 @@ class sdof_pinn(nn.Module):
             "R_ode" : R_ode
         }
 
-    def loss_func(self, t_pde, t_obs, x_obs, lambdas):
+    def loss_func(self, t_pde: torch.Tensor, t_obs: torch.Tensor, x_obs: torch.Tensor, lambdas: dict) -> Tuple[torch.Tensor, list]:
+        """
+        Calculate the loss values.
+
+        Args:
+            t_pde (torch.Tensor): Tensor of time values in collocation domain
+            t_obs (torch.Tensor): Tensor of time values in observation domain
+            x_obs (torch.Tensor): Tensor of displacement values in observation domain
+            lambdas (dict): Dictionary of lambda weighting parameters
+
+        Returns:
+            dict: Values of individual loss functions
+        """
         residuals = self.calc_residuals(t_pde, t_obs, x_obs)
         R_obs = residuals["R_obs"]
         R_ic = residuals["R_ic"]
@@ -444,284 +621,16 @@ class sdof_pinn(nn.Module):
 
         return loss, [L_obs, L_ic, L_ode]
 
-    def predict(self, tp):
-        yp = self.forward(tp)
-        return yp
+    def predict(self, tp: torch.Tensor) -> torch.Tensor:
+        """
+        Predict state values from any input
 
-class sdof_free_pinn(nn.Module):
-    
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
-        super().__init__()
-        self.n_input = N_INPUT
-        self.n_output = N_OUTPUT
-        self.n_hidden = N_HIDDEN
-        self.n_layers = N_LAYERS
-        self.activation = nn.Tanh
+        Args:
+            tp (torch.Tensor): values of time over which to predict
 
-        self.build_net()
-    
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
-    
-    def nonlinearity(self, nonlin_style="lin_osc"):
-        self.nonlin_style = nonlin_style
-
-    def set_phys_params(self, params, par_type):
-        self.param_type = par_type
-        match par_type:
-            case "constant":
-                match self.nonlin_style:
-                    case "lin_osc":
-                        self.k = params['k']
-                        self.c = params['c']
-                        self.phys_params = torch.tensor([self.c, self.k])
-                    case "cubic_stiffness":
-                        self.k = params['k']
-                        self.k3 = params['k3']
-                        self.c = params['c']
-                        self.phys_params = torch.tensor([self.c, self.k, self.k3])
-            case "variable":
-                match self.nonlin_style:
-                    case "lin_osc":
-                        self.register_parameter("phys_params", nn.Parameter(torch.tensor([params["c"], params["k"]])))
-                    case "cubic_stiffness":
-                        self.register_parameter("phys_params", nn.Parameter(torch.tensor([params["c"], params["k"], params["k3"]])))
-
-    def set_norm_params(self, alphas, ode_norm_Lambda):
-        self.alpha_t = alphas["t"]
-        self.alpha_x = alphas["x"]
-
-        match self.nonlin_style:
-            case "lin_osc":
-                self.alpha_k = alphas["k"]
-                self.alpha_c = alphas["c"]
-                
-                alpha_d0 = 1.0
-                alpha_d1 = 1.0 / self.alpha_t
-                alpha_d2 = 1.0 / (self.alpha_t**2)
-                self.ode_alphas = {
-                    "d0" : alpha_d0 * ode_norm_Lambda,
-                    "d1" : alpha_d1 * ode_norm_Lambda,
-                    "d2" : alpha_d2 * ode_norm_Lambda
-                }
-                
-            case "cubic_stiffness":
-                self.alpha_k = alphas["k"]
-                self.alpha_k3 = alphas["k3"]
-                self.alpha_c = alphas["c"]
-
-                alpha_d0 = 1.0
-                alpha_d0_3 = self.alpha_x**2
-                alpha_d1 = 1.0 / self.alpha_t
-                alpha_d2 = 1.0 / (self.alpha_t**2)
-                self.ode_alphas = {
-                    "d0" : alpha_d0 * ode_norm_Lambda,
-                    "d0_3" : alpha_d0_3 * ode_norm_Lambda,
-                    "d1" : alpha_d1 * ode_norm_Lambda,
-                    "d2" : alpha_d2 * ode_norm_Lambda
-                }
-        
-    def forward(self, x):
-        x = self.net(x)
-        return x
-
-    def calc_residuals(self, t_pde_hat, t_obs, x_obs):
-
-        match self.param_type:
-            case "constant":
-                self.m_hat = self.ode_alphas["d2"]
-                self.c_hat = self.ode_alphas["d1"] * self.c
-                self.k_hat = self.ode_alphas["d0"] * self.k
-                if self.nonlin_style == "cubic_stiffness":
-                    self.k3_hat = self.ode_alphas["d0_3"] * self.k3
-
-            case "variable":
-                self.m_hat = self.ode_alphas["d2"]
-                self.c_hat = self.ode_alphas["d1"] * self.phys_params[0] * self.alpha_c
-                self.k_hat = self.ode_alphas["d0"] * self.phys_params[1] * self.alpha_k
-                if self.nonlin_style == "cubic_stiffness":
-                    self.k3_hat = self.ode_alphas["d0_3"] * self.phys_params[2] * self.alpha_k3
-
-        # observation loss
-        xh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
-        R_obs = xh_obs - x_obs
-
-        # ode residual
-        xh_pde_hat = self.forward(t_pde_hat)   # N_y-hat (in Ω_ode)
-        dx = torch.autograd.grad(xh_pde_hat, t_pde_hat, torch.ones_like(xh_pde_hat), create_graph=True)[0]  # ∂_t-hat N_y-hat
-        dx2 = torch.autograd.grad(dx, t_pde_hat, torch.ones_like(dx), create_graph=True)[0]  # ∂^2_t-hat N_y-hat
-        match self.nonlin_style:
-            case "lin_osc":
-                R_pde = self.m_hat * dx2 + self.c_hat * dx + self.k_hat * xh_pde_hat
-            case "cubic_stiffness":
-                R_pde = self.m_hat * dx2 + self.c_hat * dx + self.k_hat * xh_pde_hat + self.k3_hat * xh_pde_hat**3
-
-        return {
-            "R_obs" : R_obs,
-            "R_pde" : R_pde
-        }
-
-    def loss_func(self, t_pde, t_obs, x_obs, lambds):
-        residuals = self.calc_residuals(t_pde, t_obs, x_obs)
-        R_obs = residuals["R_obs"]
-        R_pde = residuals["R_pde"]
-
-        L_obs = lambds[0] * torch.mean(R_obs**2)
-        L_pde = lambds[1] * torch.mean(R_pde**2)
-        loss = L_obs + L_pde
-
-        return loss, [L_obs, L_pde]
-
-    def predict(self, tp):
-        yp = self.forward(tp)
-        return yp
-
-class sdof_forced_pinn(nn.Module):
-    
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_LAYERS):
-        super().__init__()
-        self.n_input = N_INPUT
-        self.n_output = N_OUTPUT
-        self.n_hidden = N_HIDDEN
-        self.n_layers = N_LAYERS
-        self.activation = nn.Tanh
-
-        self.build_net()
-    
-    def build_net(self):
-        self.net = nn.Sequential(
-            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
-            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
-            nn.Linear(self.n_hidden, self.n_output)
-            )
-        return self.net
-    
-    def nonlinearity(self, nonlin_style="lin_osc"):
-        self.nonlin_style = nonlin_style
-
-    def set_forcing(self, force):
-        self.force = force
-
-    def set_phys_params(self, params, par_type):
-        self.param_type = par_type
-        match par_type:
-            case "constant":
-                match self.nonlin_style:
-                    case "lin_osc":
-                        self.k = params['k']
-                        self.c = params['c']
-                        self.phys_params = torch.tensor([self.c, self.k])
-                    case "cubic_stiffness":
-                        self.k = params['k']
-                        self.k3 = params['k3']
-                        self.c = params['c']
-                        self.phys_params = torch.tensor([self.c, self.k, self.k3])
-            case "variable":
-                match self.nonlin_style:
-                    case "lin_osc":
-                        self.register_parameter("phys_params", nn.Parameter(torch.tensor([params["c"], params["k"]])))
-                    case "cubic_stiffness":
-                        self.register_parameter("phys_params", nn.Parameter(torch.tensor([params["c"], params["k"], params["k3"]])))
-
-    def set_norm_params(self, alphas, ode_norm_Lambda):
-        self.alpha_t = alphas["t"]
-        self.alpha_x = alphas["x"]
-        self.alpha_F = alphas["F"]
-
-        match self.nonlin_style:
-            case "lin_osc":
-                self.alpha_k = alphas["k"]
-                self.alpha_c = alphas["c"]
-                
-                alpha_d0 = 1.0
-                alpha_d1 = 1.0 / self.alpha_t
-                alpha_d2 = 1.0 / (self.alpha_t**2)
-                alpha_ff = self.alpha_F/self.alpha_x
-                self.ode_alphas = {
-                    "d0" : alpha_d0 * ode_norm_Lambda,
-                    "d1" : alpha_d1 * ode_norm_Lambda,
-                    "d2" : alpha_d2 * ode_norm_Lambda,
-                    "ff" : alpha_ff * ode_norm_Lambda
-                }
-                
-            case "cubic_stiffness":
-                self.alpha_k = alphas["k"]
-                self.alpha_k3 = alphas["k3"]
-                self.alpha_c = alphas["c"]
-
-                alpha_d0 = 1.0
-                alpha_d0_3 = self.alpha_x**2
-                alpha_d1 = 1.0 / self.alpha_t
-                alpha_d2 = 1.0 / (self.alpha_t**2)
-                alpha_ff = self.alpha_F/self.alpha_x
-                self.ode_alphas = {
-                    "d0" : alpha_d0 * ode_norm_Lambda,
-                    "d0_3" : alpha_d0_3 * ode_norm_Lambda,
-                    "d1" : alpha_d1 * ode_norm_Lambda,
-                    "d2" : alpha_d2 * ode_norm_Lambda,
-                    "ff" : alpha_ff * ode_norm_Lambda
-                }
-        
-    def forward(self, x):
-        x = self.net(x)
-        return x
-
-    def calc_residuals(self, t_pde_hat, t_obs, x_obs):
-
-        # observation residual
-        xh_obs = self.forward(t_obs)  # N_y-hat or N_y (in Ω_a)
-        R_obs = xh_obs - x_obs
-
-        # ode residual
-        xh_pde_hat = self.forward(t_pde_hat)   # N_y-hat (in Ω_ode)
-        dx = torch.autograd.grad(xh_pde_hat, t_pde_hat, torch.ones_like(xh_pde_hat), create_graph=True)[0]  # ∂_t-hat N_y-hat
-        dx2 = torch.autograd.grad(dx, t_pde_hat, torch.ones_like(dx), create_graph=True)[0]  # ∂^2_t-hat N_y-hat
-
-        match self.param_type:
-            case "constant":
-                self.m_hat = self.ode_alphas["d2"]
-                self.c_hat = self.ode_alphas["d1"] * self.c
-                self.k_hat = self.ode_alphas["d0"] * self.k
-                self.eta = self.ode_alphas["ff"]
-                if self.nonlin_style == "cubic_stiffness":
-                    self.k3_hat = self.ode_alphas["d0_3"] * self.k3
-
-            case "variable":
-                self.m_hat = self.ode_alphas["d2"]
-                self.c_hat = self.ode_alphas["d1"] * self.phys_params[0] * self.alpha_c
-                self.k_hat = self.ode_alphas["d0"] * self.phys_params[1] * self.alpha_k
-                self.eta = self.ode_alphas["ff"]
-                if self.nonlin_style == "cubic_stiffness":
-                    self.k3_hat = self.ode_alphas["d0_3"] * self.phys_params[2] * self.alpha_k3
-
-        match self.nonlin_style:
-            case "lin_osc":
-                R_pde = self.m_hat * dx2 + self.c_hat * dx + self.k_hat * xh_pde_hat - self.eta * self.force
-            case "cubic_stiffness":
-                R_pde = self.m_hat * dx2 + self.c_hat * dx + self.k_hat * xh_pde_hat + self.k3_hat * xh_pde_hat**3 - self.eta * self.force
-
-        return {
-            "R_obs" : R_obs,
-            "R_pde" : R_pde
-        }
-
-    def loss_func(self, t_pde, t_obs, x_obs, lambdas):
-        residuals = self.calc_residuals(t_pde, t_obs, x_obs)
-        R_obs = residuals["R_obs"]
-        R_pde = residuals["R_pde"]
-
-        L_obs = lambdas['obs'] * torch.mean(R_obs**2)
-        L_ode = lambdas['ode'] * torch.mean(R_pde**2)
-        loss = L_obs + L_ode
-
-        return loss, [L_obs, L_ode]
-
-    def predict(self, tp):
+        Returns:
+            yp (torch.Tensor): values of predicted displacement
+        """
         yp = self.forward(tp)
         return yp
 
@@ -735,3 +644,4 @@ class ParamClipper(object):
             params = module.phys_params.data
             params = params.clamp(min=0, max=None)
             module.phys_params.data = params
+
