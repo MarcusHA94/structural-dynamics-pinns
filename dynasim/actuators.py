@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+import scipy.signal
 from math import pi
 
 class excitation():
@@ -39,16 +40,16 @@ class sine_sweep(excitation):
     Sine sweep signal
     '''
 
-    def __init__(self, w_l, w_u, f0=1.0, scale='linear'):
+    def __init__(self, w_l, w_u, F0=1.0, scale='linear'):
         self.w_l = w_l
         self.w_u = w_u
-        self.f0 = f0
+        self.F0 = F0
         self.scale = scale
 
     def _generate(self, time, seed=43810):
         f0 = self.w_l / (2*pi)
         f1 = self.w_u / (2*pi)
-        F =  f0 * scipy.signal.chirp(time, f0, time[-1], f1, method=self.scale)
+        F =  self.F0 * scipy.signal.chirp(time, f0, time[-1], f1, method=self.scale)
         return F
     
 class rand_phase_ms(excitation):

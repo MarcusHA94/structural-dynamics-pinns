@@ -12,7 +12,7 @@ This repo includes a series of physics-informed neural networks for various dyna
 | Duffing SDOF      | A                     | A                 | A              |
 | Linear MDOF       | A                     | A                 | A              |
 | Duffing MDOF      | A                     | A                 | A              |
-| Beam - Free       | D                     | A                 | D              |
+| Beam - Free       | D                     | D                 | D              |
 | Beam - Forced     | P                     | P                 | P              |
 <!-- | Elastic waves     | N/A               | D                 | N/A            | -->
 

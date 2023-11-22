@@ -71,7 +71,8 @@ class state_space_system:
 
         # initiate simulator
         if simulator is None:
-            self.simulator = scipy_ivp(self)
+            # self.simulator = scipy_ivp(self)
+            self.simulator = rk4(self)
         else:
             self.simulator = simulator(self)
 

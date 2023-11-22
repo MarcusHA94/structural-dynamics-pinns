@@ -56,6 +56,16 @@ class rk4(simulator):
 
     def __init__(self, system):
         super().__init__(system)
+        self.system = system
+
+    def sim_one(self, dt, z0, t_point):
+
+        k1 = self.ode_f(t_point, z0)
+        k2 = self.ode_f(t_point, z0 + k1*dt/2)
+        k3 = self.ode_f(t_point, z0 + k2*dt/2)
+        k4 = self.ode_f(t_point, z0 + k3*dt)
+        zplus1 = z0 + (dt/6)*(k1 + 2*k2 + 2*k3 + k4)
+        return zplus1
 
     def sim(self, time, z0):
 

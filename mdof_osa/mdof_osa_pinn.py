@@ -287,12 +287,21 @@ class osa_pinn_mdof(nn.Module):
                 return xp
     
     def predict_new(self, x0, v0, t, f0=None):
-        if f0 is None:
-            X = torch.tensor([x0, v0, t])
-            xp = self.net(X)
-        else:
-            X = torch.tensor([x0, v0, t, f0])
-            xp = self.net(X)
+        if not torch.is_tensor(t):
+            t = torch.tensor([[t]])
+        if len(x0.shape) < 2:
+            x0 = x0.reshape(1,-1)
+        if len(v0.shape) < 2:
+            v0 = v0.reshape(1,-1)
+        if len(f0.shape) < 2:
+            f0 = f0.reshape(1,-1)
+        xp = self.forward(x0, v0, t, f0)
+        # if f0 is None:
+        #     X = torch.tensor([x0, v0, t])
+        #     xp = self.forward(x0, v0, t, f0)
+        # else:
+        #     X = torch.tensor([x0, v0, t, f0])
+        #     xp = self.forward(X)
         return xp
 
 class bbnn(nn.Module):

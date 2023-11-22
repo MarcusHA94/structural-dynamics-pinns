@@ -71,7 +71,7 @@ def sdof_solution(time: torch.Tensor, config: dict) -> (torch.Tensor, torch.Tens
     return x, v
 
 # Generate excitation signal based on configuration
-def generate_excitation(time: torch.Tensor, exc_config: dict) -> torch.Tensor:
+def generate_excitation(time: np.ndarray, exc_config: dict) -> torch.Tensor:
     F0 = exc_config["F0"]
     nt = time.shape[0]
     time = time.reshape(-1, 1)

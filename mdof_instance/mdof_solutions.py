@@ -102,7 +102,7 @@ def add_noise(x: np.ndarray, db: float = -10.0, seed: int = 43810) -> np.ndarray
     ns = x.shape[0]
     nd = x.shape[1]
     noise_amp = 10.0 ** (db / 10.0)
-    x_noisy = torch.zeros_like(x)
+    x_noisy = np.zeros_like(x)
     for i in range(nd):
         np.random.seed(seed+i)
         noise_x = noise_amp * np.random.normal(loc=0.0, scale=noise_amp,size=ns)
