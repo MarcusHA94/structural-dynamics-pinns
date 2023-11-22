@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from math import pi
 
 from typing import Tuple, Union
 Tensor = Union[torch.Tensor, np.ndarray]
@@ -72,22 +73,15 @@ class mdof_pinn(nn.Module):
 
         self.build_net()
 
-        self.configure(**config)
+        self.configure(config)
 
     def build_net(self) -> None:
-        # Construct the neural network layers
-        layers = [
-            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
-        ]  # First layer
-        layers.extend(
-            [
-                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
-                for _ in range(self.n_layers - 1)
-            ]
-        )  # Hidden layers
-        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
-
-        self.net = nn.Sequential(*layers)  # Create the neural network
+        self.net = nn.Sequential(
+            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
+            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
+            nn.Linear(self.n_hidden, self.n_output)
+            )
+        return self.net
     
     def forward(self, x: torch.Tensor, G: torch.Tensor = torch.tensor(0.0), D: torch.Tensor = torch.tensor(1.0)) -> torch.Tensor:
         """
@@ -347,6 +341,355 @@ class mdof_pinn(nn.Module):
         zp = self.forward(self.t_col)
         return zp
 
+class mdof_pinn_stoch(nn.Module):
+
+    def __init__(self, config: dict, device=None):
+        super().__init__()
+        self.n_input = config["n_input"]
+        self.n_output = config["n_output"]
+        self.n_hidden = config["n_hidden"]
+        self.n_layers = config["n_layers"]
+        self.n_dof = config["n_dof"]
+        self.activation = nn.Tanh
+        self.t_pi = torch.tensor(pi)
+
+        if device is None:
+            self.device = torch.device("cpu")
+        else:
+            self.device = device
+
+        self.build_net()
+
+        self.configure(config)
+
+    def build_net(self) -> None:
+        self.net = nn.Sequential(
+            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
+            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
+            nn.Linear(self.n_hidden, self.n_output)
+            ).to(self.device)
+        return self.net
+    
+    def forward(self, x: torch.Tensor, G: torch.Tensor = torch.tensor(0.0), D: torch.Tensor = torch.tensor(1.0)) -> torch.Tensor:
+        """
+        Forward pass through the neural network.
+
+        Args:
+            x (torch.Tensor): Input to network
+            G (torch.Tensor): Tensor of BC values
+            D (torch.Tensor): Tensor of BC extension mask
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        y = G + D * self.net(x)
+        return y
+    
+    def configure(self, config: dict) -> None:
+        """
+        Configures neural network
+
+        Args:
+            config (dict): Configuration parameters
+        """
+
+        self.config = config
+
+        self.nonlinearity = config["nonlinearity"]
+        self.param_func = config["param_func"]
+
+        self.nct = config["nct"]  # number of time collocation points
+
+        self.set_phys_params()
+        self.set_norm_params()
+
+    def set_phys_params(self) -> None:
+        """
+        Set physical parameters of model, and adds them as either constants or parameters for optimisation
+        """
+
+        config = self.config
+        self.param_attrs = {}
+        for param_name, param_dict in config["phys_params"].items():
+            self.param_attrs[param_name] = param_dict["type"]
+            if param_dict["type"] == "constant":
+                setattr(self,param_name, param_dict["value"])
+            elif param_dict["type"] == "variable":
+                self.register_parameter(param_name, nn.Parameter(torch.ones_like(param_dict["value"])))
+        if hasattr(self,"M") and hasattr(self,"C") and hasattr(self,"K"):
+            self.A = torch.cat((
+                    torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.eye(self.n_dof)), dim=1),
+                    torch.cat((-torch.linalg.inv(self.M)@self.K, -torch.linalg.inv(self.M)@self.C), dim=1)
+                    ), dim=0).to(self.device)
+        elif hasattr(self,"M"):
+            self.m_ = torch.diag(self.M).to(self.device)  # takes diagonal from mass matrix if set as constant
+        
+        if hasattr(self,"M"):
+            self.H = torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.linalg.inv(self.M)), dim=0).to(self.device)
+        if hasattr(self,"Kn") and config["nonlinearity"]=="cubic":
+            self.An = torch.cat((
+                    torch.zeros((self.n_dof,self.n_dof)),
+                    -torch.linalg.inv(self.M)@self.Kn
+                ), dim=0).to(self.device)
+
+        match config["forcing"]:
+            case dict():
+                self.force = torch.tensor(config["forcing"]).to(self.device)
+
+    def set_norm_params(self) -> None:
+        """
+        Set normalisation parameters of the model
+        """
+        config = self.config
+        self.alpha_t = config["alphas"]["t"]
+        self.alpha_x = config["alphas"]["x"]
+        self.alpha_v = config["alphas"]["v"]
+        self.alpha_z = torch.cat((self.alpha_x*torch.ones(self.n_dof,1), self.alpha_v*torch.ones(self.n_dof,1)), dim=0)
+        if config["forcing"] != None:
+            self.alpha_F = config["alphas"]["F"]
+        for param_name, param_dict in config["phys_params"].items():
+            if param_dict["type"] == "variable":
+                setattr(self,"alpha_"+param_name[:-1],config["alphas"][param_name[:-1]])
+
+    def set_colls_and_obs(self, data: dict, prediction: dict) -> None:
+        """
+        Sets collocation and observation data
+        Args:
+            data (dict): dictionary containing data in observation domain
+            prediction (dict): dictionary containing collocation domain data
+        """
+
+        # Observation set 
+        self.x_obs = data['x_hat'].to(self.device)  # displacement input
+        self.v_obs = data['v_hat'].to(self.device)  # velocity input
+        self.t_obs = data['t_hat'].to(self.device)  # time input
+        if data['F_hat'] is not None:
+            self.f_obs = data['F_hat'].to(self.device)  # force input
+        self.zz_obs = torch.cat((data['x_hat'], data['v_hat']), dim=1).to(self.device).requires_grad_()
+
+        # Collocation set
+        t_col = prediction['t_hat']
+        self.t_col = t_col.to(self.device).requires_grad_()
+        if prediction['F_hat'] is not None:
+            self.f_col = prediction['F_hat'].to(self.device).requires_grad_()
+        
+        self.ic_id = torch.argwhere(t_col[:,0]==torch.tensor(0.0)).view(-1).to(self.device)
+
+    def Kn_func(self, kn_: torch.Tensor) -> torch.Tensor:
+        """
+        Generates Kn matrix
+        
+        Args:
+            kn_ (torch.Tensor): vector of kn values
+    
+        """
+        Kn = torch.zeros((self.n_dof,self.n_dof), dtype=torch.float32)
+        for n in range(self.n_dof):
+            Kn[n,n] = kn_[n]
+        for n in range(self.n_dof-1):
+            Kn[n,n+1] = -kn_[n+1]
+        return Kn.requires_grad_()
+    
+    def set_switches(self, lambdas: dict) -> None:
+        """
+        Sets switches for residual/loss calculation to improve performance of unecessary calculation
+        Args:
+            lambdas (dict): dictionary of lambda weighting parameters
+        """
+        switches = {}
+        for key, value in lambdas.items():
+            switches[key] = value>0.0
+        self.switches = switches
+    
+    def loss_func(self, lambdas: dict) -> Tuple[torch.Tensor, list, dict]:
+        """
+        Calculate the loss values.
+
+        Args:
+            lambdas (dict): Dictionary of lambda weighting parameters
+
+        Returns:
+            torch.Tensor: Total loss
+            list: list containing individual losses
+            dict: dictionary of residuals
+        """
+
+        if self.switches['obs']:
+            # generate prediction at observation points
+            zh_obs_hat = self.forward(self.t_obs)
+            R_obs = torch.sqrt(torch.sum((zh_obs_hat - self.zz_obs)**2, dim=1))
+
+        if self.switches['ode'] or self.switches['cc'] or self.switches['ic']:
+            # generate prediction over collocation domain
+            zh_col_hat = self.forward(self.t_col)
+
+        if self.switches['ic']:
+            # calculate ic residual
+            R_ic1 = zh_col_hat[self.ic_id,:].T
+            R_ic2 = dxdt[self.ic_id,:].T
+            R_ic = torch.cat((R_ic1,R_ic2),dim=1)
+        else:
+            R_ic = torch.zeros((2,2))
+        
+        if self.switches['ode'] or self.switches['cc']:
+            # retrieve derivatives
+            dxdt = torch.zeros((zh_col_hat.shape[0],zh_col_hat.shape[1]))
+            for i in range(zh_col_hat.shape[1]):
+                dxdt[:,i] = torch.autograd.grad(zh_col_hat[:,i], self.t_col, torch.ones_like(zh_col_hat[:,i]), create_graph=True)[0][:,0]  # ∂_t-hat N_x-hat
+
+            # retrieve physical parameters
+            if hasattr(self,"A"):
+                M, C, K = self.M, self.C, self.K
+                A = self.A
+            else:
+                params = {}
+                for param_name, param_dict in self.config["phys_params"].items():
+                    if param_dict["type"] == "constant":
+                        params[param_name] = param_dict["value"]
+                    else:
+                        params[param_name] = getattr(self,param_name)*getattr(self,"alpha_"+param_name[:-1])
+                M, C, K = self.param_func(params["m_"],params["c_"],params["k_"])
+                A = torch.cat((
+                    torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.eye(self.n_dof)), dim=1),
+                    torch.cat((-torch.linalg.inv(M)@K, -torch.linalg.inv(M)@C), dim=1)
+                    ), dim=0).requires_grad_()
+            if hasattr(self, "f_col"):
+                if hasattr(self,"H"):
+                    H = self.H
+                else:
+                    H = torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.linalg.inv(M)), dim=0)
+            if hasattr(self,"kn_"):
+                if self.config["phys_params"]["kn_"]["type"]=="constant":
+                    Kn = self.Kn_func(self.kn_)
+                else:
+                    Kn = self.Kn_func(self.kn_*self.alpha_kn)
+                An = torch.cat((
+                    torch.zeros((self.n_dof,self.n_dof)),
+                    -torch.linalg.inv(M)@Kn
+                    ), dim=0).requires_grad_()
+                    
+        if self.switches['ode']:
+            match self.config:
+                case {"nonlinearity":"linear","forcing":None}:
+                    R_ = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zh_col_hat.T)
+                    R_ode = R_[self.n_dof:,:].T
+                case {"nonlinearity":"cubic","forcing":None}:
+                    q = (self.alpha_x*zh_col_hat[:,:self.n_dof] - torch.cat((torch.zeros(zh_col_hat.shape[0],1),self.alpha_x*zh_col_hat[:,:self.n_dof-1]),dim=1))**3
+                    R_ = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zh_col_hat.T) - An@(q.T)
+                    R_ode = R_[self.n_dof:,:].T
+                case {"nonlinearity":"linear","forcing":torch.Tensor()}:
+                    R_ = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zh_col_hat.T) - H@(self.alpha_F*self.f_col.T)
+                    R_ode = R_[self.n_dof:,:].T
+                case {"nonlinearity":"cubic","forcing":torch.Tensor()}:
+                    q = (self.alpha_x*zh_col_hat[:,:self.n_dof] - torch.cat((torch.zeros(zh_col_hat.shape[0],1),self.alpha_x*zh_col_hat[:,:self.n_dof-1]),dim=1))**3
+                    R_ = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zh_col_hat.T) - An@(q.T) - H@(self.alpha_F*self.f_col.T)
+                    R_ode = R_[self.n_dof:,:].T
+            R_ode = torch.sqrt(torch.sum((R_ode)**2, dim=1))
+        else:
+            R_ode = torch.ones((2,1))
+
+        if self.switches['cc']:
+            # continuity condition residual
+            R_cc = R_[:self.n_dof,:].T
+        else:
+            R_cc = torch.zeros((2,1))
+
+        residuals = {
+            "R_obs" : R_obs,
+            "R_ic" : R_ic,
+            "R_cc" : R_cc,
+            "R_ode" : R_ode
+        }
+
+        # L_obs = lambdas['obs'] * torch.mean(R_obs**2)
+        N_o = R_obs.shape[0]
+        if self.switches['obs']:
+            log_likeli_obs = -N_o * torch.log(self.sigma_) - (N_o/2) * torch.log(2*self.t_pi) - 0.5 * torch.sum((R_obs**2/self.sigma_**2))
+        else:
+            log_likeli_obs = torch.tensor(0.0)
+        L_obs = lambdas['obs'] * -log_likeli_obs
+
+        L_ic = lambdas['ic'] * torch.sum(torch.mean(R_ic**2, dim=0), dim=0)
+        L_cc = lambdas['cc'] * torch.sum(torch.mean(R_cc**2, dim=0), dim=0)
+
+        N_c = R_ode.shape[0]
+        if self.switches['ode']:
+            log_likeli_ode = -N_c * torch.log(self.sigma_s_) - (N_c/2) * torch.log(2*self.t_pi) - 0.5 * torch.sum((R_ode**2/(self.sigma_s_**2)))
+        else:
+            log_likeli_ode = torch.tensor(0.0)
+        # L_ode = lambdas['ode'] * torch.sum(torch.mean(R_ode**2, dim=0), dim=0)
+        L_ode = lambdas['ode'] * -log_likeli_ode
+
+        loss = L_obs + L_ode
+        return loss, [L_obs, L_ic, L_cc, L_ode], residuals
+    
+    def predict(self, theta_s = None) -> torch.Tensor:
+        """
+        Predict state values
+        """
+        zp = self.forward(self.t_col)
+        # retrieve derivatives
+        dxdt = torch.zeros_like((zp))
+        for i in range(zp.shape[1]):
+            dxdt[:,i] = torch.autograd.grad(zp[:,i], self.t_col, torch.ones_like(zp[:,i]), create_graph=True)[0][:,0]  # ∂_t-hat N_x-hat
+
+        # retrieve physical parameters
+        if hasattr(self,"A") and (theta_s is None):
+            M, C, K = self.M, self.C, self.K
+            A = self.A
+        else:
+            if theta_s is None:
+                params = {}
+                for param_name, param_dict in self.config["phys_params"].items():
+                    if param_dict["type"] == "constant":
+                        params[param_name] = param_dict["value"]
+                    else:
+                        params[param_name] = getattr(self,param_name)*getattr(self,"alpha_"+param_name[:-1])
+                M, C, K = self.param_func(params["m_"],params["c_"],params["k_"])
+            else:
+                M, C, K = self.param_func(self.m_, theta_s[:self.n_dof]*self.alpha_c, theta_s[self.n_dof:2*self.n_dof]*self.alpha_k)
+            A = torch.cat((
+                torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.eye(self.n_dof)), dim=1),
+                torch.cat((-torch.linalg.inv(M)@K, -torch.linalg.inv(M)@C), dim=1)
+                ), dim=0).requires_grad_()
+                
+        if self.config["forcing"] is not None:
+            if hasattr(self,"H"):
+                H = self.H
+            else:
+                H = torch.cat((torch.zeros((self.n_dof,self.n_dof)),torch.linalg.inv(M)), dim=0)
+        if hasattr(self,"kn_"):
+            if self.config["phys_params"]["kn_"]["type"]=="constant":
+                Kn = self.Kn_func(self.kn_)
+            elif theta_s is None:
+                Kn = self.Kn_func(self.kn_*self.alpha_kn)
+            else:
+                Kn = self.Kn_func(theta_s[2*self.n_dof:]*self.alpha_kn)
+            An = torch.cat((
+                torch.zeros((self.n_dof,self.n_dof)),
+                -torch.linalg.inv(M)@Kn
+                ), dim=0).requires_grad_()
+        
+        match self.config:
+            case {"nonlinearity":"linear"}:
+                Hf_pred = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zp.T)
+            case {"nonlinearity":"cubic"}:
+                q = (self.alpha_x*zp[:,:self.n_dof] - torch.cat((torch.zeros(zp.shape[0],1),self.alpha_x*zp[:,:self.n_dof-1]),dim=1))**3
+                Hf_pred = (self.alpha_z/self.alpha_t)*dxdt.T - A@(self.alpha_z*zp.T) - An@(q.T)
+        f_pred = torch.linalg.inv(M) @ Hf_pred[self.n_dof:,:] / self.alpha_F
+        
+        return zp, f_pred.T
+
+    def physics_likelihood(self, theta_s=None):
+
+        z_pred, f_pred = self.predict(theta_s)
+
+        N_c = f_pred.shape[0]
+        f_res = torch.sqrt(torch.sum((self.f_col - self.f_pred)**2, dim=1))
+        log_likeli_ode = - N_c * torch.log(self.sigma_s_) - (N_c/2) * torch.log(2*self.t_pi) - 0.5 * torch.sum((f_res**2/(self.sigma_s_**2)))
+        return log_likeli_ode
+
+
 class bbnn(nn.Module):
     
     def __init__(self, N_INPUT: int, N_OUTPUT: int, N_HIDDEN: int, N_LAYERS: int):
@@ -361,19 +704,12 @@ class bbnn(nn.Module):
         self.build_net()
     
     def build_net(self) -> None:
-        # Construct the neural network layers
-        layers = [
-            nn.Sequential(nn.Linear(self.n_input, self.n_hidden), self.activation)
-        ]  # First layer
-        layers.extend(
-            [
-                nn.Sequential(nn.Linear(self.n_hidden, self.n_hidden), self.activation)
-                for _ in range(self.n_layers - 1)
-            ]
-        )  # Hidden layers
-        layers.append(nn.Linear(self.n_hidden, self.n_output))  # Output layer
-
-        self.net = nn.Sequential(*layers)  # Create the neural network
+        self.net = nn.Sequential(
+            nn.Sequential(*[nn.Linear(self.n_input, self.n_hidden), self.activation()]),
+            nn.Sequential(*[nn.Sequential(*[nn.Linear(self.n_hidden, self.n_hidden), self.activation()]) for _ in range(self.n_layers-1)]),
+            nn.Linear(self.n_hidden, self.n_output)
+            )
+        return self.net
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
