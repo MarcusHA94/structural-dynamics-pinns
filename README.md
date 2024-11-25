@@ -1,20 +1,32 @@
-# Physics-informed neural networks (PINNs) for dynamic systems
+# Physics-informed neural networks (PINNs) for dynamical systems
 
-This repo includes a series of physics-informed neural networks for various dynamic systems. The models and their development stage are shown in the below table. Please note, though some are noted as available and ready for use, they are in no way perfect. Please feel free to flag any bugs, or any possible improvements. The letters which define the development stage are:
- - A: Available
- - D: In development
- - P: Proposed
+This repo includes a series of physics-informed neural networks for various dynamic systems. Please feel free to flag any bugs, or any possible improvements.
 
+### Required python packages
+```
+python >= 3.10
+numpy >2.x
+scipy
+matplotlib
+dynasim >= 1.4
+pytorch >= 2.0
+tqdm
+pyro
+seaborn
+arviz
+```
 
-| Model             | Equation Discovery    | Sparse Learning   | One-step Ahead |
-| :----             | :------------:        | :--------------:  | :-----------:  |
-| Linear SDOF       | A                     | A                 | A              |
-| Duffing SDOF      | A                     | A                 | A              |
-| Linear MDOF       | A                     | A                 | A              |
-| Duffing MDOF      | A                     | A                 | A              |
-| Beam - Free       | D                     | D                 | D              |
-| Beam - Forced     | P                     | P                 | P              |
-<!-- | Elastic waves     | N/A               | D                 | N/A            | -->
+### Citation
+
+This code is provided for the paper https://arxiv.org/abs/2410.01340
+```
+@article{haywood2024response,
+  title={Response Estimation and System Identification of Dynamical Systems via Physics-Informed Neural Networks},
+  author={Haywood-Alexander, Marcus and Arcieri, Giacomo and Kamariotis, Antonios and Chatzi, Eleni},
+  journal={arXiv preprint arXiv:2410.01340},
+  year={2024}
+}
+```
 
 # General PINN Definition
 
